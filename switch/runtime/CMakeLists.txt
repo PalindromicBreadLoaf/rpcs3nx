@@ -9,6 +9,7 @@ add_library(rpcs3_switch_runtime STATIC
 	jit_memory.cpp
 	runtime.cpp
 	sysinfo.cpp
+	thread.cpp
 )
 target_include_directories(rpcs3_switch_runtime PUBLIC
 	"${PROJECT_SOURCE_DIR}"

@@ -7,6 +7,7 @@
 #include <switch.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdio>
 #include <mutex>
 
@@ -21,6 +22,7 @@ namespace rpcs3::switch_app
 		bool initialize_paths();
 		void initialize_callback_probe();
 		void initialize_runtime_probe();
+		void initialize_thread_probe();
 		void initialize_jit_probe();
 		void initialize_guest_memory_probe();
 		void initialize_vm_native_probe();
@@ -36,6 +38,9 @@ namespace rpcs3::switch_app
 		std::atomic_bool m_callback_probe_ran_on_main{false};
 		bool m_runtime_probe_passed = false;
 		u64 m_runtime_timeout_us = 0;
+		bool m_thread_probe_passed = false;
+		u64 m_thread_probe_id = 0;
+		std::size_t m_thread_probe_stack_size = 0;
 		switch_runtime::jit_memory m_jit_memory;
 		bool m_jit_probe_passed = false;
 		Result m_jit_result = 0;

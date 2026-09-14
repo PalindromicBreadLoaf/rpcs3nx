@@ -2,6 +2,7 @@
 
 #include "build_info.h"
 #include "Loader/ELF.h"
+#include "Utilities/Thread.h"
 #include "switch/runtime/exception_handler.h"
 #include "util/atomic.hpp"
 #include "util/sysinfo.hpp"
@@ -207,6 +208,57 @@ namespace rpcs3::switch_app
 		log("Atomic wait runtime: %s (%u/%u notified, list %s, timeout %lu us)\n",
 			m_runtime_probe_passed ? "PASS" : "FAIL", static_cast<u32>(completed), thread_count,
 			list_completed == 1 ? "notified" : "FAIL", m_runtime_timeout_us);
+	}
+
+	void application::initialize_thread_probe()
+	{
+		struct thread_probe_context
+		{
+		};
+		struct probe_result
+		{
+			u64 id = 0;
+			u64 affinity = 0;
+			usz stack_size = 0;
+			u64 ticks = 0;
+			bool named = false;
+		};
+
+		probe_result probe;
+		atomic_t<u32> dispatched{0};
+		named_thread<thread_probe_context> worker("RPCS3 Thread");
+		worker([&]
+			{
+				const auto [stack, stack_size] = thread_ctrl::get_thread_stack();
+				thread_ctrl::get_cycles(worker);
+				for (u32 index = 0; index < 100'000; index++)
+				{
+					__asm__ volatile("yield");
+				}
+				probe = {thread_ctrl::get_tid(), thread_ctrl::get_thread_affinity_mask(),
+					stack ? stack_size : 0, thread_ctrl::get_cycles(worker), thread_ctrl::get_name() == "RPCS3 Thread"};
+				dispatched.release(1);
+				dispatched.notify_one();
+			});
+		dispatched.wait(0, atomic_wait_timeout{2'000'000'000});
+		const u64 native_id = thread_ctrl::get_native_id(worker);
+		worker = thread_state::finished;
+		atomic_t<u32> workload_sum{0};
+		const usz workload_threads = map_workload("RPCS3 Work", 2, 32, [&](usz index)
+			{
+				workload_sum.fetch_add(static_cast<u32>(index));
+			});
+		const bool workload_complete = workload_threads == 2 && workload_sum == 496;
+
+		m_thread_probe_id = probe.id;
+		m_thread_probe_stack_size = probe.stack_size;
+		m_thread_probe_passed = probe.id != 0 && native_id == probe.id && probe.affinity != 0 &&
+		                        probe.stack_size != 0 && probe.ticks != 0 && probe.named &&
+		                        worker == thread_state::finished && workload_complete;
+		log("RPCS3 thread runtime: %s (ID 0x%lx, affinity 0x%lx, stack %lu KiB, ticks %lu, name %s, task dispatch %s, workload %s)\n",
+			m_thread_probe_passed ? "PASS" : "FAIL", probe.id, probe.affinity, probe.stack_size >> 10,
+			probe.ticks, probe.named ? "set" : "FAIL", worker == thread_state::finished ? "complete" : "FAIL",
+			workload_complete ? "complete" : "FAIL");
 	}
 
 	void application::initialize_jit_probe()
@@ -511,6 +563,7 @@ namespace rpcs3::switch_app
 		padInitializeDefault(&pad);
 		initialize_callback_probe();
 		initialize_runtime_probe();
+		initialize_thread_probe();
 		initialize_jit_probe();
 		initialize_guest_memory_probe();
 		initialize_vm_native_probe();
@@ -540,6 +593,8 @@ namespace rpcs3::switch_app
 													"waiting");
 			std::printf("Atomic wait runtime: %s (%lu us timeout)\n",
 				m_runtime_probe_passed ? "pass" : "FAIL", m_runtime_timeout_us);
+			std::printf("RPCS3 thread runtime: %s (stack %lu KiB)\n",
+				m_thread_probe_passed ? "pass" : "FAIL", m_thread_probe_stack_size >> 10);
 			std::printf("JIT arena: %s (%u MiB)\n", m_jit_probe_passed ? "pass" : "FAIL", RPCS3_SWITCH_JIT_SIZE_MB);
 			std::printf("Guest memory: %s (8 GiB sparse window)\n", m_guest_memory_probe_passed ? "pass" : "FAIL");
 			std::printf("RPCS3 native VM: %s\n", m_vm_native_probe_passed ? "pass" : "FAIL");
