@@ -2,6 +2,21 @@
   "version": 3,
   "configurePresets": [
     {
+      "name": "switch",
+      "displayName": "Nintendo Switch application shell",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-switch",
+      "toolchainFile": "$env{DEVKITPRO}/cmake/Switch.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "WITH_LLVM": "OFF",
+        "USE_NATIVE_INSTRUCTIONS": "OFF",
+        "USE_LTO": "OFF",
+        "USE_OPENGL": "OFF",
+        "USE_VULKAN": "OFF"
+      }
+    },
+    {
       "name": "gcc",
       "generator": "Ninja",
       "binaryDir": "build-gcc",
@@ -72,6 +87,10 @@
     }
   ],
   "buildPresets": [
+    {
+      "name": "switch",
+      "configurePreset": "switch"
+    },
     {
       "name": "msvc-debug",
       "configurePreset": "msvc",

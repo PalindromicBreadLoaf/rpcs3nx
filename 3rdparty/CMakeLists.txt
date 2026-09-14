@@ -97,7 +97,7 @@ add_subdirectory(yaml-cpp)
 
 # OpenGL
 
-if (NOT ANDROID AND NOT APPLE)
+if (USE_OPENGL AND NOT ANDROID AND NOT APPLE)
 	find_package(OpenGL REQUIRED OPTIONAL_COMPONENTS EGL)
 
 	add_library(3rdparty_opengl INTERFACE)
@@ -323,7 +323,7 @@ endif()
 
 # GLEW
 add_library(3rdparty_glew INTERFACE)
-if(NOT MSVC AND NOT ANDROID AND NOT APPLE)
+if(USE_OPENGL AND NOT MSVC AND NOT ANDROID AND NOT APPLE)
 	find_package(GLEW REQUIRED)
 	target_link_libraries(3rdparty_glew INTERFACE GLEW::GLEW)
 endif()
