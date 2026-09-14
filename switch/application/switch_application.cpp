@@ -4,6 +4,7 @@
 #include "Loader/ELF.h"
 #include "switch/runtime/exception_handler.h"
 #include "util/atomic.hpp"
+#include "util/sysinfo.hpp"
 #include "util/vm.hpp"
 
 #include <array>
@@ -472,6 +473,10 @@ namespace rpcs3::switch_app
 		log("Platform: NintendoSwitch\n");
 		log("Compiler: %s\n", __VERSION__);
 		log("Heap: %u MiB\n", RPCS3_SWITCH_HEAP_SIZE_MB);
+		log("Host: %s\n", utils::get_system_info().c_str());
+		log("OS: %s\n", utils::get_OS_version_string().c_str());
+		const auto [memory_total, memory_used] = utils::get_memory_usage();
+		log("Process memory: %lu MiB total, %lu MiB used\n", memory_total >> 20, memory_used >> 20);
 		log("Main thread: 0x%lx (result 0x%08x)\n", m_main_thread_id, rc);
 		log("Data: %s\nConfig: %s\nCache: %s\n", data_directory, config_directory, cache_directory);
 

@@ -1,4 +1,4 @@
-set(RPCS3_SWITCH_SHELL_VERSION "0.5.0")
+set(RPCS3_SWITCH_SHELL_VERSION "0.6.0")
 
 execute_process(
 	COMMAND git -C "${PROJECT_SOURCE_DIR}" rev-parse --short=12 HEAD
