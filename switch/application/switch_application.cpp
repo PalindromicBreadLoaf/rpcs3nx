@@ -2,6 +2,7 @@
 
 #include "build_info.h"
 #include "Loader/ELF.h"
+#include "switch/runtime/exception_handler.h"
 #include "util/atomic.hpp"
 
 #include <array>
@@ -297,6 +298,16 @@ namespace rpcs3::switch_app
 		const Result hole_result = svcQueryMemory(&hole_info, &hole_page_info,
 			reinterpret_cast<u64>(m_guest_memory.address_space() + page_size));
 		const bool sparse_hole = R_SUCCEEDED(hole_result) && hole_info.type == MemType_Unmapped;
+		m_expected_fault_address = m_guest_memory.address_space() + page_size;
+		const bool handler_installed = switch_runtime::install_exception_handler(guest_memory_fault_handler, this);
+		register u64 recovered_value asm("x0") = reinterpret_cast<u64>(m_expected_fault_address);
+		if (handler_installed)
+		{
+			asm volatile("ldr w0, [x0]" : "+r"(recovered_value) : : "memory");
+			switch_runtime::uninstall_exception_handler();
+		}
+		m_expected_fault_address = nullptr;
+		const bool fault_recovered = handler_installed && recovered_value == 0xfeedc0de && m_guest_fault_count == 1;
 
 		finish(m_guest_memory.unmap(0, page_size), "unmap first alias");
 		if (R_FAILED(m_guest_memory_result))
@@ -320,13 +331,28 @@ namespace rpcs3::switch_app
 		const bool mappings_released = m_guest_memory.mapping_count() == 0;
 		const Result finalize_result = m_guest_memory.finalize();
 		m_guest_memory_result = finalize_result;
-		m_guest_memory_probe_passed = alias_coherent && sparse_hole && independent_unmap && remap_coherent &&
+		m_guest_memory_probe_passed = alias_coherent && sparse_hole && fault_recovered && independent_unmap && remap_coherent &&
 		                              mappings_released && R_SUCCEEDED(finalize_result);
-		log("Guest memory: %s (8 GiB sparse window, aliases %s, hole %s, unmap %s, remap %s, cleanup %s)\n",
+		log("Guest memory: %s (8 GiB sparse window, aliases %s, hole %s, fault %s, unmap %s, remap %s, cleanup %s)\n",
 			m_guest_memory_probe_passed ? "PASS" : "FAIL", alias_coherent ? "coherent" : "FAIL",
-			sparse_hole ? "unmapped" : "FAIL", independent_unmap ? "independent" : "FAIL",
+			sparse_hole ? "unmapped" : "FAIL", fault_recovered ? "recovered" : "FAIL",
+			independent_unmap ? "independent" : "FAIL",
 			remap_coherent ? "coherent" : "FAIL",
 			mappings_released && R_SUCCEEDED(finalize_result) ? "complete" : "FAIL");
+	}
+
+	bool application::guest_memory_fault_handler(ThreadExceptionDump& context, void* user) noexcept
+	{
+		auto& app = *static_cast<application*>(user);
+		if (context.far.x != reinterpret_cast<u64>(app.m_expected_fault_address))
+		{
+			return false;
+		}
+
+		context.cpu_gprs[0].x = 0xfeedc0de;
+		context.pc.x += sizeof(u32);
+		app.m_guest_fault_count++;
+		return true;
 	}
 
 	void application::on_applet_hook(AppletHookType hook)

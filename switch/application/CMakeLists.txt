@@ -1,4 +1,4 @@
-set(RPCS3_SWITCH_SHELL_VERSION "0.3.0")
+set(RPCS3_SWITCH_SHELL_VERSION "0.4.0")
 
 execute_process(
 	COMMAND git -C "${PROJECT_SOURCE_DIR}" rev-parse --short=12 HEAD
@@ -13,6 +13,7 @@ endif()
 configure_file(build_info.h.in generated/build_info.h @ONLY)
 
 add_executable(rpcs3_switch
+	${PROJECT_SOURCE_DIR}/switch/runtime/exception_entry.S
 	callback_queue.cpp
 	main.cpp
 	switch_application.cpp

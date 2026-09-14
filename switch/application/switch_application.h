@@ -23,6 +23,7 @@ namespace rpcs3::switch_app
 		void initialize_runtime_probe();
 		void initialize_jit_probe();
 		void initialize_guest_memory_probe();
+		static bool guest_memory_fault_handler(ThreadExceptionDump& context, void* user) noexcept;
 		void log(const char* format, ...);
 		void flush_log();
 		void on_applet_hook(AppletHookType hook);
@@ -40,6 +41,8 @@ namespace rpcs3::switch_app
 		switch_runtime::guest_memory m_guest_memory;
 		bool m_guest_memory_probe_passed = false;
 		Result m_guest_memory_result = 0;
+		u8* m_expected_fault_address = nullptr;
+		u32 m_guest_fault_count = 0;
 		std::mutex m_log_mutex;
 		FILE* m_log_file = nullptr;
 		u64 m_main_thread_id = 0;

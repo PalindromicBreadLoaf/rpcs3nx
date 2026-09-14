@@ -26,6 +26,7 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 endif()
 
 if(NINTENDO_SWITCH)
+    enable_language(ASM)
     include(buildfiles/cmake/ConfigureSwitch.cmake)
     add_subdirectory(switch/runtime)
     add_subdirectory(switch/application)
