@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <iostream>
 
@@ -142,19 +143,24 @@ static fs::error to_error(DWORD e)
 
 #else
 
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/statvfs.h>
 #include <sys/file.h>
-#include <sys/uio.h>
-#include <sys/ioctl.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <libgen.h>
 #include <string.h>
 #include <unistd.h>
 #include <utime.h>
+
+#if defined(__SWITCH__)
+#include <switch/runtime/devices/fs_dev.h>
+#else
+#include <sys/mman.h>
+#include <sys/uio.h>
+#include <sys/ioctl.h>
+#endif
 
 #if defined(__APPLE__)
 #include <copyfile.h>
@@ -168,6 +174,7 @@ static fs::error to_error(DWORD e)
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
 #include <linux/fs.h>
+#elif defined(__SWITCH__)
 #else
 #include <fstream>
 #include <sys/disk.h>
@@ -725,6 +732,9 @@ namespace fs
 	{
 		int m_fd;
 		u64 m_raw_device_size; // Size of the raw device, 0 if it's not one: it never changes, so it's retrieved once when the file is opened
+#ifdef __SWITCH__
+		std::recursive_mutex m_io_mutex;
+#endif
 
 	public:
 		unix_file(int fd, u64 raw_device_size = 0)
@@ -742,6 +752,9 @@ namespace fs
 
 		stat_t get_stat() override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+#endif
 			struct ::stat file_info;
 			ensure(::fstat(m_fd, &file_info) == 0); // "file::stat"
 
@@ -761,11 +774,17 @@ namespace fs
 
 		void sync() override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+#endif
 			ensure(::fsync(m_fd) == 0); // "file::sync"
 		}
 
 		bool trunc(u64 length) override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+#endif
 			if (::ftruncate(m_fd, length) != 0)
 			{
 				g_tls_error = to_error(errno);
@@ -777,6 +796,9 @@ namespace fs
 
 		u64 read(void* buffer, u64 count) override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+#endif
 			u64 result = 0;
 
 			// Loop because (huge?) read can be processed partially
@@ -795,6 +817,23 @@ namespace fs
 
 		u64 read_at(u64 offset, void* buffer, u64 count) override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+			const off_t old_pos = ::lseek(m_fd, 0, SEEK_CUR);
+			if (old_pos < 0 || ::lseek(m_fd, offset, SEEK_SET) < 0)
+			{
+				g_tls_error = to_error(errno);
+				return 0;
+			}
+
+			const u64 result = read(buffer, count);
+			if (::lseek(m_fd, old_pos, SEEK_SET) < 0)
+			{
+				g_tls_error = to_error(errno);
+			}
+
+			return result;
+#else
 			u64 result = 0;
 
 			// For safety; see read()
@@ -810,10 +849,14 @@ namespace fs
 			}
 
 			return result;
+#endif
 		}
 
 		u64 write(const void* buffer, u64 count) override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+#endif
 			u64 result = 0;
 
 			// For safety; see read()
@@ -832,6 +875,9 @@ namespace fs
 
 		u64 seek(s64 offset, seek_mode whence) override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+#endif
 			if (whence > seek_end)
 			{
 				fmt::throw_exception("Invalid whence (0x%x)", whence);
@@ -854,6 +900,9 @@ namespace fs
 
 		u64 size() override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+#endif
 			if (!m_raw_device_size)
 			{
 				struct ::stat file_info;
@@ -873,10 +922,13 @@ namespace fs
 
 		file_id get_id() override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+#endif
 			struct ::stat file_info;
 			ensure(::fstat(m_fd, &file_info) == 0); // "file::get_id"
 
-			file_id id{"unix_file"};
+			file_id id{"unix_file", {}};
 			id.data.resize(sizeof(file_info.st_dev) + sizeof(file_info.st_ino));
 
 			std::memcpy(id.data.data(), &file_info.st_dev, sizeof(file_info.st_dev));
@@ -886,6 +938,17 @@ namespace fs
 
 		u64 write_gather(const iovec_clone* buffers, u64 buf_count) override
 		{
+#ifdef __SWITCH__
+			std::lock_guard lock(m_io_mutex);
+			u64 result = 0;
+
+			for (u64 index = 0; index < buf_count; index++)
+			{
+				result += write(buffers[index].iov_base, buffers[index].iov_len);
+			}
+
+			return result;
+#else
 			static_assert(sizeof(iovec) == sizeof(iovec_clone), "Weird iovec size");
 			static_assert(offsetof(iovec, iov_len) == offsetof(iovec_clone, iov_len), "Weird iovec::iov_len offset");
 
@@ -904,6 +967,7 @@ namespace fs
 			}
 
 			return result;
+#endif
 		}
 
 		void release() override
@@ -1896,6 +1960,8 @@ void fs::sync()
 {
 #ifdef _WIN32
 	fs::g_tls_error = fs::error::unknown;
+#elif defined(__SWITCH__)
+	fs::g_tls_error = R_SUCCEEDED(fsdevCommitDevice("sdmc")) ? fs::error::ok : fs::error::unknown;
 #else
 	::sync();
 	fs::g_tls_error = fs::error::ok;
@@ -2078,12 +2144,21 @@ fs::file::file(const std::string& path, bs_t<open_mode> mode)
 		return;
 	}
 
+#ifdef __SWITCH__
+	if (mode & fs::write && mode & fs::lock)
+	{
+		g_tls_error = fs::error::acces;
+		::close(fd);
+		return;
+	}
+#else
 	if (mode & fs::write && mode & fs::lock && ::flock(fd, LOCK_EX | LOCK_NB) != 0)
 	{
 		g_tls_error = errno == EWOULDBLOCK ? fs::error::acces : to_error(errno);
 		::close(fd);
 		return;
 	}
+#endif
 
 	if (mode & fs::trunc && mode & fs::lock && mode & fs::write)
 	{

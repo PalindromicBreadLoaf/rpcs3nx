@@ -1,5 +1,6 @@
 #pragma once
 
+#include "util/endian.hpp"
 #include "util/types.hpp"
 #include "../../Utilities/File.h"
 #include "../../Utilities/bit_set.h"

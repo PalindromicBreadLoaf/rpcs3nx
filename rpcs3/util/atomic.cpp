@@ -199,6 +199,8 @@ namespace
 			tid = tid_temp; // Use a temporary for extra safety
 #elif defined(__FreeBSD__)
 			tid = pthread_getthreadid_np();
+#elif defined(__SWITCH__)
+			tid = reinterpret_cast<uptr>(pthread_self());
 #else
 			tid = pthread_self();
 #endif

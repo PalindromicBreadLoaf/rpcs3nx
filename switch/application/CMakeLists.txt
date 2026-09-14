@@ -18,6 +18,8 @@ add_executable(rpcs3_switch
 	switch_application.cpp
 )
 target_include_directories(rpcs3_switch PRIVATE
+	"${PROJECT_SOURCE_DIR}"
+	"${PROJECT_SOURCE_DIR}/rpcs3"
 	"${CMAKE_CURRENT_SOURCE_DIR}"
 	"${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
@@ -31,6 +33,7 @@ target_compile_options(rpcs3_switch PRIVATE
 	-Wpedantic
 	-Werror=return-type
 )
+target_link_libraries(rpcs3_switch PRIVATE rpcs3_switch_runtime)
 
 nx_generate_nacp(
 	OUTPUT rpcs3_switch.nacp

@@ -1,6 +1,7 @@
 #include "switch_application.h"
 
 #include "build_info.h"
+#include "Loader/ELF.h"
 
 #include <cerrno>
 #include <cstdarg>
@@ -23,6 +24,28 @@ namespace rpcs3::switch_app
 		bool ensure_directory(const char* path)
 		{
 			return mkdir(path, 0777) == 0 || errno == EEXIST;
+		}
+
+		const char* elf_error_name(elf_error error)
+		{
+			switch (error)
+			{
+			case elf_error::ok: return "OK";
+			case elf_error::stream: return "file not found";
+			case elf_error::stream_header: return "failed to read ELF header";
+			case elf_error::stream_phdrs: return "failed to read program headers";
+			case elf_error::stream_shdrs: return "failed to read section headers";
+			case elf_error::stream_data: return "failed to read ELF data";
+			case elf_error::header_magic: return "not an ELF";
+			case elf_error::header_version: return "unsupported ELF format";
+			case elf_error::header_class: return "invalid ELF class";
+			case elf_error::header_machine: return "not a PowerPC ELF";
+			case elf_error::header_endianness: return "invalid ELF byte order";
+			case elf_error::header_type: return "not an executable ELF";
+			case elf_error::header_os: return "invalid ELF OS ABI";
+			}
+
+			return "unknown ELF error";
 		}
 	} // namespace
 
@@ -157,15 +180,34 @@ namespace rpcs3::switch_app
 		log("RPCS3 revision: %s\n", RPCS3_SWITCH_REVISION);
 		log("Platform: NintendoSwitch\n");
 		log("Compiler: %s\n", __VERSION__);
-		log("Heap: %u MiB\n.");
-	 	log("main thread: 0x%lx (result 0x%08x)\n",
-			RPCS3_SWITCH_HEAP_SIZE_MB, m_main_thread_id, rc);
+		log("Heap: %u MiB\n", RPCS3_SWITCH_HEAP_SIZE_MB);
+		log("Main thread: 0x%lx (result 0x%08x)\n", m_main_thread_id, rc);
 		log("Data: %s\nConfig: %s\nCache: %s\n", data_directory, config_directory, cache_directory);
 
 		struct stat boot_stat{};
 		const bool boot_exists = stat(boot_path, &boot_stat) == 0 && S_ISREG(boot_stat.st_mode);
 		log("Fixed launch path: %s [%s]\n", boot_path, boot_exists ? "ready" : "missing");
-		log("Emulator linkage: pending dependency/runtime isolation\n");
+
+		elf_error boot_error = elf_error::stream;
+		u64 boot_entry = 0;
+		u32 boot_segments = 0;
+		if (boot_exists)
+		{
+			const fs::file boot_file(boot_path);
+			const ppu_exec_object boot_elf(boot_file, 0, +elf_opt::no_data);
+			boot_error = boot_elf.get_error();
+			if (boot_error == elf_error::ok)
+			{
+				boot_entry = boot_elf.header.e_entry;
+				boot_segments = static_cast<u32>(boot_elf.progs.size());
+			}
+		}
+		log("RPCS3 ELF loader: %s", elf_error_name(boot_error));
+		if (boot_error == elf_error::ok)
+		{
+			log(" (entry 0x%lx, %u segments)", boot_entry, boot_segments);
+		}
+		log("\n");
 
 		appletHook(&m_hook_cookie, applet_hook, this);
 		padConfigureInput(1, HidNpadStyleSet_NpadStandard);
@@ -192,7 +234,7 @@ namespace rpcs3::switch_app
 			}
 
 			std::printf("\x1b[2JRPCS3 Switch shell %s\n\n", RPCS3_SWITCH_SHELL_VERSION);
-			std::printf("Boot ELF: %s\n", boot_exists ? "found" : "missing (/switch/rpcs3/boot.elf)");
+			std::printf("Boot ELF: %s\n", boot_exists ? elf_error_name(boot_error) : "missing (/switch/rpcs3/boot.elf)");
 			std::printf("Callback queue: %s\n", reported_callback_probe ?
 													(m_callback_probe_ran_on_main.load() ? "pass" : "FAIL") :
 													"waiting");

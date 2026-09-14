@@ -27,6 +27,7 @@ endif()
 
 if(NINTENDO_SWITCH)
     include(buildfiles/cmake/ConfigureSwitch.cmake)
+    add_subdirectory(switch/runtime)
     add_subdirectory(switch/application)
     return()
 endif()
