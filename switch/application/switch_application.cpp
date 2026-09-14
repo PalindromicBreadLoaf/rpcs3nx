@@ -300,10 +300,11 @@ namespace rpcs3::switch_app
 		const bool sparse_hole = R_SUCCEEDED(hole_result) && hole_info.type == MemType_Unmapped;
 		m_expected_fault_address = m_guest_memory.address_space() + page_size;
 		const bool handler_installed = switch_runtime::install_exception_handler(guest_memory_fault_handler, this);
-		register u64 recovered_value asm("x0") = reinterpret_cast<u64>(m_expected_fault_address);
+		u64 recovered_value = 0;
 		if (handler_installed)
 		{
-			asm volatile("ldr w0, [x0]" : "+r"(recovered_value) : : "memory");
+			register u64 fault_address asm("x0") = reinterpret_cast<u64>(m_expected_fault_address);
+			asm volatile("ldr w0, [x0]\nstr x0, %0" : "=m"(recovered_value), "+r"(fault_address) : : "memory");
 			switch_runtime::uninstall_exception_handler();
 		}
 		m_expected_fault_address = nullptr;
