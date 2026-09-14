@@ -2,6 +2,10 @@
 
 #include "util/types.hpp"
 
+#ifdef __SWITCH__
+#include <switch/arm/counter.h>
+#endif
+
 #ifdef _M_X64
 #ifdef _MSC_VER
 extern "C" u64 __rdtsc();
@@ -14,7 +18,9 @@ namespace utils
 {
 	inline u64 get_tsc()
 	{
-#if defined(ARCH_ARM64)
+#if defined(__SWITCH__)
+		return armGetSystemTick();
+#elif defined(ARCH_ARM64)
 		u64 r = 0;
 		__asm__ volatile("mrs %0, cntvct_el0" : "=r" (r));
 		return r;

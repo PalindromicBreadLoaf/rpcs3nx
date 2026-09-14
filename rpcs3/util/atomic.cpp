@@ -1,9 +1,15 @@
 #include "atomic.hpp"
 
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__SWITCH__)
+#define USE_HORIZON
+#elif defined(__linux__) || defined(__APPLE__)
 #define USE_FUTEX
 #elif !defined(_WIN32)
 #define USE_STD
+#endif
+
+#ifdef USE_HORIZON
+#include <switch.h>
 #endif
 
 #ifdef _MSC_VER
@@ -183,6 +189,9 @@ namespace
 		// Standard CV/mutex pair (often contains pthread_cond_t/pthread_mutex_t)
 		un_t<std::condition_variable> cv;
 		un_t<std::mutex> mtx;
+#elif defined(USE_HORIZON)
+		CondVar cv;
+		Mutex mtx;
 #endif
 
 		void init(uptr iptr)
@@ -208,6 +217,9 @@ namespace
 #ifdef USE_STD
 			cv.init(cv);
 			mtx.init(mtx);
+#elif defined(USE_HORIZON)
+			condvarInit(&cv);
+			mutexInit(&mtx);
 #endif
 
 			ensure(ptr_ref.exchange(fat_ptr{iptr, 0, 1}) == fat_ptr{});
@@ -298,6 +310,10 @@ namespace
 			mtx->lock();
 			mtx->unlock();
 			cv->notify_all();
+#elif defined(USE_HORIZON)
+			mutexLock(&mtx);
+			mutexUnlock(&mtx);
+			condvarWakeAll(&cv);
 #elif defined(_WIN32)
 			if (NtWaitForAlertByThreadId)
 			{
@@ -322,6 +338,15 @@ namespace
 			{
 				mtx->unlock();
 				cv->notify_all();
+				return true;
+			}
+
+			return false;
+#elif defined(USE_HORIZON)
+			if (mutexTryLock(&mtx))
+			{
+				mutexUnlock(&mtx);
+				condvarWakeAll(&cv);
 				return true;
 			}
 
@@ -1046,13 +1071,15 @@ atomic_wait_engine::wait(const void* data, u32 old_value, u64 timeout, atomic_wa
 #ifdef USE_STD
 	// Lock mutex
 	std::unique_lock lock(*cond->mtx.get());
+#elif defined(USE_HORIZON)
+	mutexLock(&cond->mtx);
 #else
 	if (ext_size)
 		atomic_fence_seq_cst();
 #endif
 
 	// Can skip unqueue process if true
-#if defined(USE_FUTEX) || defined(USE_STD)
+#if defined(USE_FUTEX) || defined(USE_STD) || defined(USE_HORIZON)
 	constexpr bool fallback = true;
 #else
 	bool fallback = false;
@@ -1104,6 +1131,18 @@ atomic_wait_engine::wait(const void* data, u32 old_value, u64 timeout, atomic_wa
 		else
 		{
 			cond->cv->wait(lock);
+		}
+#elif defined(USE_HORIZON)
+		if (cond->sync > 1) [[unlikely]]
+		{
+			if (!cond->set_sleep())
+			{
+				break;
+			}
+		}
+		else
+		{
+			condvarWaitTimeout(&cond->cv, &cond->mtx, timeout + 1 ? timeout : UINT64_MAX);
 		}
 #elif defined(_WIN32)
 		LARGE_INTEGER qw;
@@ -1203,6 +1242,8 @@ atomic_wait_engine::wait(const void* data, u32 old_value, u64 timeout, atomic_wa
 	{
 		lock.unlock();
 	}
+#elif defined(USE_HORIZON)
+	mutexUnlock(&cond->mtx);
 #endif
 
 	// Release resources in reverse order

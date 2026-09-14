@@ -2,7 +2,9 @@
 
 #include "build_info.h"
 #include "Loader/ELF.h"
+#include "util/atomic.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstdarg>
 #include <cstring>
@@ -134,6 +136,76 @@ namespace rpcs3::switch_app
 		worker.join();
 	}
 
+	void application::initialize_runtime_probe()
+	{
+		constexpr u32 thread_count = 4;
+		constexpr u64 wait_timeout = 2'000'000'000;
+		atomic_t<u32> ready{0};
+		atomic_t<u32> gate{0};
+		atomic_t<u32> completed{0};
+		std::array<std::thread, thread_count> workers;
+
+		for (auto& worker : workers)
+		{
+			worker = std::thread([&]
+				{
+					ready.fetch_add(1);
+					gate.wait(0, static_cast<atomic_wait_timeout>(wait_timeout));
+					if (gate == 1)
+					{
+						completed.fetch_add(1);
+					}
+				});
+		}
+
+		while (ready != thread_count)
+		{
+			svcSleepThread(100'000);
+		}
+		svcSleepThread(10'000'000);
+
+		gate.release(1);
+		gate.notify_all();
+		for (auto& worker : workers)
+		{
+			worker.join();
+		}
+
+		atomic_t<u32> list_ready{0};
+		atomic_t<u32> first{0};
+		atomic_t<u32> second{0};
+		atomic_t<u32> list_completed{0};
+		std::thread list_worker([&]
+			{
+				atomic_wait::list<2> list{};
+				list.set<0>(first, 0);
+				list.set<1>(second, 0);
+				list_ready.release(1);
+				list.wait(static_cast<atomic_wait_timeout>(wait_timeout));
+				list_completed.release(second == 1);
+			});
+		while (list_ready == 0)
+		{
+			svcSleepThread(100'000);
+		}
+		svcSleepThread(10'000'000);
+		second.release(1);
+		second.notify_one();
+		list_worker.join();
+
+		atomic_t<u32> timeout_gate{0};
+		const u64 before = armGetSystemTick();
+		timeout_gate.wait(0, static_cast<atomic_wait_timeout>(5'000'000));
+		const u64 elapsed = armGetSystemTick() - before;
+		m_runtime_timeout_us = elapsed * 1'000'000 / armGetSystemTickFreq();
+		m_runtime_probe_passed = completed == thread_count && list_completed == 1 && timeout_gate == 0 &&
+			m_runtime_timeout_us >= 4'000 && m_runtime_timeout_us < 250'000;
+
+		log("Atomic wait runtime: %s (%u/%u notified, list %s, timeout %lu us)\n",
+			m_runtime_probe_passed ? "PASS" : "FAIL", static_cast<u32>(completed), thread_count,
+			list_completed == 1 ? "notified" : "FAIL", m_runtime_timeout_us);
+	}
+
 	void application::on_applet_hook(AppletHookType hook)
 	{
 		switch (hook)
@@ -214,6 +286,7 @@ namespace rpcs3::switch_app
 		PadState pad{};
 		padInitializeDefault(&pad);
 		initialize_callback_probe();
+		initialize_runtime_probe();
 
 		bool reported_callback_probe = false;
 		while (appletMainLoop())
@@ -238,6 +311,8 @@ namespace rpcs3::switch_app
 			std::printf("Callback queue: %s\n", reported_callback_probe ?
 													(m_callback_probe_ran_on_main.load() ? "pass" : "FAIL") :
 													"waiting");
+			std::printf("Atomic wait runtime: %s (%lu us timeout)\n",
+				m_runtime_probe_passed ? "pass" : "FAIL", m_runtime_timeout_us);
 			std::printf("\nPress + to exit.\n");
 			consoleUpdate(nullptr);
 			svcSleepThread(16'000'000);
