@@ -71,6 +71,9 @@ namespace utils
 	{
 #ifdef _WIN32
 		void* m_handle{};
+#elif defined(__SWITCH__)
+		struct horizon_state;
+		horizon_state* m_horizon{};
 #else
 		int m_file{};
 #endif

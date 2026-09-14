@@ -4,6 +4,7 @@
 #include "Loader/ELF.h"
 #include "switch/runtime/exception_handler.h"
 #include "util/atomic.hpp"
+#include "util/vm.hpp"
 
 #include <array>
 #include <cerrno>
@@ -342,6 +343,74 @@ namespace rpcs3::switch_app
 			mappings_released && R_SUCCEEDED(finalize_result) ? "complete" : "FAIL");
 	}
 
+	void application::initialize_vm_native_probe()
+	{
+		constexpr usz page_size = 0x1000;
+		constexpr usz window_size = 8ull << 30;
+		constexpr u32 initial_pattern = 0x13579bdf;
+		constexpr u32 restored_pattern = 0x2468ace0;
+
+		u8* const window = static_cast<u8*>(utils::memory_reserve(window_size, nullptr, true));
+		if (!window)
+		{
+			log("RPCS3 native VM: FAIL (8 GiB reservation)\n");
+			return;
+		}
+
+		utils::shm shared{2 * page_size};
+		const usz shared_size = shared.size();
+		u8* const canonical = shared.map_self();
+		u8* const first = shared.map(window);
+		u8* const second = shared.map(window + 2 * shared_size);
+		bool aliases = canonical && first == window && second == window + 2 * shared_size;
+		if (aliases)
+		{
+			*reinterpret_cast<volatile u32*>(first) = initial_pattern;
+			aliases = *reinterpret_cast<volatile u32*>(canonical) == initial_pattern &&
+			          *reinterpret_cast<volatile u32*>(second) == initial_pattern;
+		}
+
+		u8* const read_only = shared.map(window + 4 * shared_size, utils::protection::ro);
+		MemoryInfo read_only_info{};
+		u32 read_only_page_info = 0;
+		const bool unmapped_read_only_alias = read_only == window + 4 * shared_size &&
+		                                      R_SUCCEEDED(svcQueryMemory(&read_only_info, &read_only_page_info, reinterpret_cast<u64>(read_only))) &&
+		                                      (read_only_info.type & MemState_Type) == MemType_Unmapped;
+		shared.unmap(first);
+		shared.unmap(second);
+		shared.unmap(read_only);
+		shared.unmap_self();
+		utils::memory_release(window, window_size);
+
+		u8* const anonymous = static_cast<u8*>(utils::memory_reserve(4 * page_size));
+		bool protection_restore = anonymous != nullptr;
+		bool protected_unmapped = false;
+		bool decommit_zeroed = false;
+		if (anonymous)
+		{
+			utils::memory_commit(anonymous, 4 * page_size);
+			*reinterpret_cast<volatile u32*>(anonymous + page_size) = restored_pattern;
+			utils::memory_protect(anonymous + page_size, page_size, utils::protection::ro);
+			MemoryInfo protected_info{};
+			u32 protected_page_info = 0;
+			protected_unmapped = R_SUCCEEDED(svcQueryMemory(&protected_info, &protected_page_info,
+									 reinterpret_cast<u64>(anonymous + page_size))) &&
+			                     (protected_info.type & MemState_Type) == MemType_Unmapped;
+			utils::memory_protect(anonymous + page_size, page_size, utils::protection::rw);
+			protection_restore = *reinterpret_cast<volatile u32*>(anonymous + page_size) == restored_pattern;
+			utils::memory_decommit(anonymous, 4 * page_size);
+			utils::memory_commit(anonymous, 4 * page_size);
+			decommit_zeroed = *reinterpret_cast<volatile u32*>(anonymous + page_size) == 0;
+			utils::memory_release(anonymous, 4 * page_size);
+		}
+
+		m_vm_native_probe_passed = aliases && unmapped_read_only_alias && protected_unmapped && protection_restore && decommit_zeroed;
+		log("RPCS3 native VM: %s (aliases %s, RO alias %s, protection %s, decommit %s)\n",
+			m_vm_native_probe_passed ? "PASS" : "FAIL", aliases ? "coherent" : "FAIL",
+			unmapped_read_only_alias ? "unmapped" : "FAIL", protected_unmapped && protection_restore ? "unmapped/restored" : "FAIL",
+			decommit_zeroed ? "zeroed" : "FAIL");
+	}
+
 	bool application::guest_memory_fault_handler(ThreadExceptionDump& context, void* user) noexcept
 	{
 		auto& app = *static_cast<application*>(user);
@@ -439,6 +508,7 @@ namespace rpcs3::switch_app
 		initialize_runtime_probe();
 		initialize_jit_probe();
 		initialize_guest_memory_probe();
+		initialize_vm_native_probe();
 
 		bool reported_callback_probe = false;
 		while (appletMainLoop())
@@ -467,6 +537,7 @@ namespace rpcs3::switch_app
 				m_runtime_probe_passed ? "pass" : "FAIL", m_runtime_timeout_us);
 			std::printf("JIT arena: %s (%u MiB)\n", m_jit_probe_passed ? "pass" : "FAIL", RPCS3_SWITCH_JIT_SIZE_MB);
 			std::printf("Guest memory: %s (8 GiB sparse window)\n", m_guest_memory_probe_passed ? "pass" : "FAIL");
+			std::printf("RPCS3 native VM: %s\n", m_vm_native_probe_passed ? "pass" : "FAIL");
 			std::printf("\nPress + to exit.\n");
 			consoleUpdate(nullptr);
 			svcSleepThread(16'000'000);

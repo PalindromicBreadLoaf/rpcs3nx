@@ -3,6 +3,7 @@ add_library(rpcs3_switch_runtime STATIC
 	${PROJECT_SOURCE_DIR}/Utilities/StrFmt.cpp
 	${PROJECT_SOURCE_DIR}/Utilities/mutex.cpp
 	${PROJECT_SOURCE_DIR}/rpcs3/util/atomic.cpp
+	vm_native.cpp
 	exception_handler.cpp
 	guest_memory.cpp
 	jit_memory.cpp

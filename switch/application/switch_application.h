@@ -23,6 +23,7 @@ namespace rpcs3::switch_app
 		void initialize_runtime_probe();
 		void initialize_jit_probe();
 		void initialize_guest_memory_probe();
+		void initialize_vm_native_probe();
 		static bool guest_memory_fault_handler(ThreadExceptionDump& context, void* user) noexcept;
 		void log(const char* format, ...);
 		void flush_log();
@@ -41,6 +42,7 @@ namespace rpcs3::switch_app
 		switch_runtime::guest_memory m_guest_memory;
 		bool m_guest_memory_probe_passed = false;
 		Result m_guest_memory_result = 0;
+		bool m_vm_native_probe_passed = false;
 		u8* m_expected_fault_address = nullptr;
 		u32 m_guest_fault_count = 0;
 		std::mutex m_log_mutex;
