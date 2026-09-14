@@ -20,5 +20,12 @@ if(NOT RPCS3_SWITCH_HEAP_SIZE_MB MATCHES "^[0-9]+$")
 	message(FATAL_ERROR "RPCS3_SWITCH_HEAP_SIZE_MB must be an integer number of MiB")
 endif()
 
+set(RPCS3_SWITCH_JIT_SIZE_MB 128 CACHE STRING
+	"Initial Horizon JIT arena size in MiB")
+if(NOT RPCS3_SWITCH_JIT_SIZE_MB MATCHES "^[0-9]+$" OR RPCS3_SWITCH_JIT_SIZE_MB STREQUAL "0")
+	message(FATAL_ERROR "RPCS3_SWITCH_JIT_SIZE_MB must be a positive integer number of MiB")
+endif()
+
 message(STATUS "Configuring explicit NintendoSwitch application shell")
 message(STATUS "Switch newlib heap: ${RPCS3_SWITCH_HEAP_SIZE_MB} MiB")
+message(STATUS "Switch JIT arena: ${RPCS3_SWITCH_JIT_SIZE_MB} MiB")

@@ -1,4 +1,4 @@
-set(RPCS3_SWITCH_SHELL_VERSION "0.1.0")
+set(RPCS3_SWITCH_SHELL_VERSION "0.2.0")
 
 execute_process(
 	COMMAND git -C "${PROJECT_SOURCE_DIR}" rev-parse --short=12 HEAD
@@ -26,6 +26,7 @@ target_include_directories(rpcs3_switch PRIVATE
 target_compile_definitions(rpcs3_switch PRIVATE
 	_POSIX_C_SOURCE=200809L
 	RPCS3_SWITCH_HEAP_SIZE_MB=${RPCS3_SWITCH_HEAP_SIZE_MB}
+	RPCS3_SWITCH_JIT_SIZE_MB=${RPCS3_SWITCH_JIT_SIZE_MB}
 )
 target_compile_options(rpcs3_switch PRIVATE
 	-Wall

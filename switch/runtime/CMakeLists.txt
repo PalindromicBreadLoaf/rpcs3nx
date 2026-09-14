@@ -3,6 +3,7 @@ add_library(rpcs3_switch_runtime STATIC
 	${PROJECT_SOURCE_DIR}/Utilities/StrFmt.cpp
 	${PROJECT_SOURCE_DIR}/Utilities/mutex.cpp
 	${PROJECT_SOURCE_DIR}/rpcs3/util/atomic.cpp
+	jit_memory.cpp
 	runtime.cpp
 )
 target_include_directories(rpcs3_switch_runtime PUBLIC

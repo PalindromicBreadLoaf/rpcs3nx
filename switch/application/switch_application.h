@@ -1,6 +1,7 @@
 #pragma once
 
 #include "callback_queue.h"
+#include "switch/runtime/jit_memory.h"
 
 #include <switch.h>
 
@@ -19,6 +20,7 @@ namespace rpcs3::switch_app
 		bool initialize_paths();
 		void initialize_callback_probe();
 		void initialize_runtime_probe();
+		void initialize_jit_probe();
 		void log(const char* format, ...);
 		void flush_log();
 		void on_applet_hook(AppletHookType hook);
@@ -30,6 +32,9 @@ namespace rpcs3::switch_app
 		std::atomic_bool m_callback_probe_ran_on_main{false};
 		bool m_runtime_probe_passed = false;
 		u64 m_runtime_timeout_us = 0;
+		switch_runtime::jit_memory m_jit_memory;
+		bool m_jit_probe_passed = false;
+		Result m_jit_result = 0;
 		std::mutex m_log_mutex;
 		FILE* m_log_file = nullptr;
 		u64 m_main_thread_id = 0;

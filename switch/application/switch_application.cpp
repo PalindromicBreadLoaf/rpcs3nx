@@ -199,11 +199,61 @@ namespace rpcs3::switch_app
 		const u64 elapsed = armGetSystemTick() - before;
 		m_runtime_timeout_us = elapsed * 1'000'000 / armGetSystemTickFreq();
 		m_runtime_probe_passed = completed == thread_count && list_completed == 1 && timeout_gate == 0 &&
-			m_runtime_timeout_us >= 4'000 && m_runtime_timeout_us < 250'000;
+		                         m_runtime_timeout_us >= 4'000 && m_runtime_timeout_us < 250'000;
 
 		log("Atomic wait runtime: %s (%u/%u notified, list %s, timeout %lu us)\n",
 			m_runtime_probe_passed ? "PASS" : "FAIL", static_cast<u32>(completed), thread_count,
 			list_completed == 1 ? "notified" : "FAIL", m_runtime_timeout_us);
+	}
+
+	void application::initialize_jit_probe()
+	{
+		constexpr std::size_t arena_size = static_cast<std::size_t>(RPCS3_SWITCH_JIT_SIZE_MB) * 1024 * 1024;
+		m_jit_result = m_jit_memory.initialize(arena_size);
+		if (R_FAILED(m_jit_result))
+		{
+			log("JIT arena: FAIL (result 0x%08x)\n", m_jit_result);
+			return;
+		}
+
+		const auto code = m_jit_memory.allocate(2 * sizeof(u32), 16);
+		if (!code)
+		{
+			log("JIT arena: FAIL (allocation)\n");
+			return;
+		}
+
+		constexpr u32 ret = 0xd65f03c0;
+		auto write_return_value = [&](u16 value)
+		{
+			const u32 move = 0x52800000 | (static_cast<u32>(value) << 5);
+			std::memcpy(code.rw, &move, sizeof(move));
+			std::memcpy(code.rw + sizeof(move), &ret, sizeof(ret));
+			m_jit_memory.publish(code);
+		};
+
+		using probe_function = u32 (*)();
+		const auto execute = reinterpret_cast<probe_function>(code.rx);
+		write_return_value(0x1234);
+		const u32 initial = execute();
+
+		atomic_t<u32> gate{0};
+		atomic_t<u32> worker_result{0};
+		std::thread worker([&]
+			{
+				gate.wait(0, static_cast<atomic_wait_timeout>(2'000'000'000));
+				worker_result.release(execute());
+			});
+		write_return_value(0x4321);
+		gate.release(1);
+		gate.notify_one();
+		worker.join();
+
+		const bool released = m_jit_memory.release(code);
+		m_jit_probe_passed = initial == 0x1234 && worker_result == 0x4321 && released && m_jit_memory.used() == 0;
+		log("JIT arena: %s (%u MiB, RW/RX aliases, initial 0x%x, patched 0x%x)\n",
+			m_jit_probe_passed ? "PASS" : "FAIL", RPCS3_SWITCH_JIT_SIZE_MB, initial,
+			static_cast<u32>(worker_result));
 	}
 
 	void application::on_applet_hook(AppletHookType hook)
@@ -287,6 +337,7 @@ namespace rpcs3::switch_app
 		padInitializeDefault(&pad);
 		initialize_callback_probe();
 		initialize_runtime_probe();
+		initialize_jit_probe();
 
 		bool reported_callback_probe = false;
 		while (appletMainLoop())
@@ -313,6 +364,7 @@ namespace rpcs3::switch_app
 													"waiting");
 			std::printf("Atomic wait runtime: %s (%lu us timeout)\n",
 				m_runtime_probe_passed ? "pass" : "FAIL", m_runtime_timeout_us);
+			std::printf("JIT arena: %s (%u MiB)\n", m_jit_probe_passed ? "pass" : "FAIL", RPCS3_SWITCH_JIT_SIZE_MB);
 			std::printf("\nPress + to exit.\n");
 			consoleUpdate(nullptr);
 			svcSleepThread(16'000'000);
