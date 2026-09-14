@@ -256,6 +256,79 @@ namespace rpcs3::switch_app
 			static_cast<u32>(worker_result));
 	}
 
+	void application::initialize_guest_memory_probe()
+	{
+		constexpr std::size_t page_size = 0x1000;
+		constexpr std::size_t backing_size = 16 * page_size;
+		constexpr std::size_t address_space_size = 8ull * 1024 * 1024 * 1024;
+		m_guest_memory_result = m_guest_memory.initialize(backing_size, address_space_size);
+		if (R_FAILED(m_guest_memory_result))
+		{
+			log("Guest memory: FAIL (initialize result 0x%08x)\n", m_guest_memory_result);
+			return;
+		}
+
+		auto finish = [&](Result rc, const char* operation)
+		{
+			m_guest_memory_result = rc;
+			if (R_FAILED(rc))
+			{
+				log("Guest memory: FAIL (%s result 0x%08x)\n", operation, rc);
+			}
+		};
+
+		finish(m_guest_memory.map(0, 0, page_size), "map first alias");
+		if (R_FAILED(m_guest_memory_result))
+			return;
+		finish(m_guest_memory.map(0, 2 * page_size, page_size), "map second alias");
+		if (R_FAILED(m_guest_memory_result))
+			return;
+
+		constexpr u32 first_pattern = 0x12345678;
+		constexpr u32 second_pattern = 0x89abcdef;
+		auto* const first = reinterpret_cast<volatile u32*>(m_guest_memory.address_space());
+		auto* const second = reinterpret_cast<volatile u32*>(m_guest_memory.address_space() + 2 * page_size);
+		*first = first_pattern;
+		const bool alias_coherent = *second == first_pattern &&
+		                            *reinterpret_cast<volatile u32*>(m_guest_memory.backing()) == first_pattern;
+
+		MemoryInfo hole_info{};
+		u32 hole_page_info = 0;
+		const Result hole_result = svcQueryMemory(&hole_info, &hole_page_info,
+			reinterpret_cast<u64>(m_guest_memory.address_space() + page_size));
+		const bool sparse_hole = R_SUCCEEDED(hole_result) && hole_info.type == MemType_Unmapped;
+
+		finish(m_guest_memory.unmap(0, page_size), "unmap first alias");
+		if (R_FAILED(m_guest_memory_result))
+			return;
+		*second = second_pattern;
+		const bool independent_unmap = *reinterpret_cast<volatile u32*>(m_guest_memory.backing()) == second_pattern;
+
+		finish(m_guest_memory.unmap(2 * page_size, page_size), "unmap second alias");
+		if (R_FAILED(m_guest_memory_result))
+			return;
+		finish(m_guest_memory.map(page_size, 2 * page_size, page_size), "remap different offset");
+		if (R_FAILED(m_guest_memory_result))
+			return;
+		constexpr u32 remap_pattern = 0x0badf00d;
+		*reinterpret_cast<volatile u32*>(m_guest_memory.backing() + page_size) = remap_pattern;
+		const bool remap_coherent = *second == remap_pattern;
+		finish(m_guest_memory.unmap(2 * page_size, page_size), "unmap remapped alias");
+		if (R_FAILED(m_guest_memory_result))
+			return;
+
+		const bool mappings_released = m_guest_memory.mapping_count() == 0;
+		const Result finalize_result = m_guest_memory.finalize();
+		m_guest_memory_result = finalize_result;
+		m_guest_memory_probe_passed = alias_coherent && sparse_hole && independent_unmap && remap_coherent &&
+		                              mappings_released && R_SUCCEEDED(finalize_result);
+		log("Guest memory: %s (8 GiB sparse window, aliases %s, hole %s, unmap %s, remap %s, cleanup %s)\n",
+			m_guest_memory_probe_passed ? "PASS" : "FAIL", alias_coherent ? "coherent" : "FAIL",
+			sparse_hole ? "unmapped" : "FAIL", independent_unmap ? "independent" : "FAIL",
+			remap_coherent ? "coherent" : "FAIL",
+			mappings_released && R_SUCCEEDED(finalize_result) ? "complete" : "FAIL");
+	}
+
 	void application::on_applet_hook(AppletHookType hook)
 	{
 		switch (hook)
@@ -338,6 +411,7 @@ namespace rpcs3::switch_app
 		initialize_callback_probe();
 		initialize_runtime_probe();
 		initialize_jit_probe();
+		initialize_guest_memory_probe();
 
 		bool reported_callback_probe = false;
 		while (appletMainLoop())
@@ -365,6 +439,7 @@ namespace rpcs3::switch_app
 			std::printf("Atomic wait runtime: %s (%lu us timeout)\n",
 				m_runtime_probe_passed ? "pass" : "FAIL", m_runtime_timeout_us);
 			std::printf("JIT arena: %s (%u MiB)\n", m_jit_probe_passed ? "pass" : "FAIL", RPCS3_SWITCH_JIT_SIZE_MB);
+			std::printf("Guest memory: %s (8 GiB sparse window)\n", m_guest_memory_probe_passed ? "pass" : "FAIL");
 			std::printf("\nPress + to exit.\n");
 			consoleUpdate(nullptr);
 			svcSleepThread(16'000'000);
